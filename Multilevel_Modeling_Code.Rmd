@@ -1,0 +1,425 @@
+---
+title: "Ethnic diversity and trust"
+author: "Hannah Reitz"
+date: "22 April 2022"
+output: html_document
+---
+
+## Loading packages
+
+```{r include=FALSE}
+library(tidyverse)
+library(stargazer)
+library(texreg)
+library(ggplot2)
+library(foreign)
+library(readxl)
+library(misty)
+library(lme4) 
+library(texreg)
+library(sjlabelled)
+library(psych)
+library(jtools)
+library(broom.mixed)
+library(RColorBrewer)
+library(sjPlot)
+library(sjmisc)
+```
+
+## Set working directory
+
+```{r, setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "...\\Prepared_Data")
+```
+
+## Loading ESS data set
+
+```{r}
+ess_raw <- read.dta("ESS9e03_1.dta")
+
+table(ess_raw$cntry)
+```
+
+## Selecting relevant variables
+
+```{r}
+ess <- 
+  ess_raw %>% 
+  select(idno, cntry, ppltrst, gndr, agea, hinctnta, isco08, eisced, eduyrs, mnactic, rlgatnd, brncntr, cntbrthd, facntr, fbrncntc, mocntr, mbrncntc, polintr, psppsgva, actrolga, psppipla, cptppola, anweight) %>% 
+  rename(id = idno,
+         country = cntry,
+         trust = ppltrst,
+         gender = gndr,
+         age = agea,
+         income = hinctnta,
+         occ = isco08,
+         educ = eisced,
+         relig = rlgatnd,
+         imm = brncntr,
+         birthco = cntbrthd,
+         fa_imm = facntr,
+         fa_birthco = fbrncntc,
+         mo_imm = mocntr,
+         mo_birthco = mbrncntc,
+         polint = polintr,
+         polsay = psppsgva,
+         polact = actrolga,
+         polinfl = psppipla,
+         polpar = cptppola
+         )
+```
+
+## Load gdp, gini, and diversity data
+
+```{r}
+# Load gdp data
+gdp_data <- read_excel("GDP.xlsx")
+
+# Load gini data
+gini_data <- read_excel("gini.xlsx")
+
+# Load diversity data
+diversity_data <- read_excel("Ethnic_Fractionalisation.xlsx")
+
+```
+
+
+## Merge ess data with gdp, gini, and diversity data
+
+```{r}
+# Merge ess with gdp data
+ess2 <- full_join(ess, gdp_data, by = c("country"), copy = FALSE, suffix = c(".x", ".y"), keep = FALSE, na_matches = "na") 
+
+# Merge ess with gini data
+ess3 <- full_join(ess2, gini_data, by = c("country"), copy = FALSE, suffix = c(".x", ".y"), keep = FALSE, na_matches = "na") 
+
+# Merge ess with diversity data
+ess4 <- full_join(ess3, diversity_data, by = c("country"), copy = FALSE, suffix = c(".x", ".y"), keep = FALSE, na_matches = "na")
+
+# After checking for correct merging rename data frame to ess
+ess <- ess4
+
+# Reorder variables 
+ess <-
+  ess %>% 
+  select(cname, country, diversity, gdp, gini, id, everything())
+```
+
+## Data preparation
+
+```{r}
+# Turn trust variable to numeric
+ess$trust <- as.numeric(ess$trust)
+
+# Turn income variable into numeric
+table(ess$income)
+class(ess$income)
+ess$income <- as.numeric(ess$income)
+table(ess$income)
+```
+
+```{r}
+# Recoding educational attainment
+table(ess$educ)
+str(ess$educ)
+levels(ess$educ)
+
+# Drop unused levels
+ess$educ <- droplevels(ess$educ)
+
+ess$educ <- recode_factor(ess$educ, 'ES-ISCED I , less than lower secondary' = "0", 'ES-ISCED II, lower secondary' = "1", 'ES-ISCED IIIb, lower tier upper secondary' = "2", 'ES-ISCED IIIa, upper tier upper secondary' = "2", 'ES-ISCED IV, advanced vocational, sub-degree' = "3", 'ES-ISCED V1, lower tertiary education, BA level' = "4", 'ES-ISCED V2, higher tertiary education, >= MA level' = "4", 'Other' = "5") 
+# 0 = No formal qualification or only primary education, 1 = Lower secondary schooling, 2 = Upper secondary vocational qualification, 3 = Advanced vocational schooling, 4 = University, 5 = Other
+table(ess$educ)
+
+levels(ess$educ) <- c("No formal qualification or only primary education", "Lower secondary schooling", "Upper secondary vocational qualification", "Advanced vocational schooling", "University", "Other")
+table(ess$educ)
+```
+
+```{r}
+# Recoding employment status
+table(ess$mnactic)
+str(ess$mnactic)
+levels(ess$mnactic)
+
+# Drop unused levels
+ess$mnactic <- droplevels(ess$mnactic)
+
+ess$unemp <- recode_factor(ess$mnactic, 'Paid work' = "0", 'Unemployed, looking for job' = "1", 'Unemployed, not looking for job' = "1", 'Education' = "2", 'Permanently sick or disabled' = "2", 'Retired' = "2", 'Community or military service' = "2", 'Housework, looking after children, others' = "2", 'Other' = "2") 
+table(ess$unemp)
+
+levels(ess$unemp) <- c("Employed", "Unemployed", "Other employment status")
+table(ess$unemp)
+```
+
+```{r}
+# Recoding religiosity
+table(ess$relig)
+levels(ess$relig)
+
+# Drop unused levels
+ess$relig <- droplevels(ess$relig)
+
+ess$relig <- recode_factor(ess$relig, 'Never' = "0", 'Less often' = "0", 'Only on special holy days' = "1", 'At least once a month' = "1", 'Once a week' = "2", 'More than once a week' = "2", 'Every day' = "2") 
+table(ess$relig)
+
+levels(ess$relig) <- c("Never or almost never", "Sometimes", "Often")
+table(ess$relig)
+```
+
+```{r}
+# Political efficacy index
+
+# Converting politcal efficacy items to numeric
+class(ess$polint)
+ess$polint <- as.numeric(ess$polint)
+ess$polsay <- as.numeric(ess$polsay)
+ess$polact <- as.numeric(ess$polact)
+ess$polinfl <- as.numeric(ess$polinfl)
+ess$polpar <- as.numeric(ess$polpar)
+
+# Cronbach's alpha for political efficacy items
+psych::alpha(subset(ess, select = c(polint, polsay, polact, polinfl, polpar)), check.keys = TRUE)
+
+# Generating political efficacy index  
+ess <- 
+  ess %>% 
+  mutate(poleff = (polint + polsay + polact + polinfl + polpar) / 5)
+
+summary(ess$poleff)
+
+# Deleting items for index
+ess <- subset(ess, select = -c(polint, polsay, polact, polinfl, polpar))
+
+
+```
+
+```{r}
+# Recoding immigration status
+
+# Respondent's immigration status
+table(ess$imm)
+# Immigration status of father and mother
+table(ess$fa_imm, ess$mo_imm)
+table(ess$mo_imm)
+
+# Drop unused levels
+ess$imm <- droplevels(ess$imm)
+ess$fa_imm <- droplevels(ess$fa_imm)
+ess$mo_imm <- droplevels(ess$mo_imm)
+
+# Assigning 0 for being born in survey country and 1 for not being born in survey country
+levels(ess$imm) <- c(0, 1)
+levels(ess$fa_imm) <- c(0, 1)
+levels(ess$mo_imm) <- c(0, 1)
+
+# Assigning 1 if respondent is not born in survey country, 2 if father or mother are not born in survey country, and 0 otherwise
+ess <- 
+  ess %>% 
+  mutate(immgen = case_when(
+         imm == 1 ~ 1, 
+         (fa_imm == 1 & mo_imm == 1) ~ 2,
+         TRUE ~ 0))
+
+table(ess$immgen)
+
+# Labeling variable
+class(ess$immgen)
+ess$immgen <- factor(ess$immgen,
+                     labels = c("Native", "1. generation", "2. generation"))
+table(ess$immgen)
+
+ess <- 
+  ess %>% 
+  mutate(imm2 = case_when(
+         imm == 1 ~ 1, 
+         (fa_imm == 1 & mo_imm == 1) ~ 1,
+         TRUE ~ 0))
+
+```
+
+```{r}
+# Rescale gdp by dividing by 1000
+ess$gdp <- ess$gdp / 1000
+
+```
+
+```{r}
+# Drop NAs on all variables
+ess <-
+  ess %>%
+  drop_na(trust, gender, age, educ, relig, income, poleff, unemp, immgen, imm, diversity, gdp, gini)
+
+```
+
+
+
+## Descriptive statistics
+
+```{r}
+# Descriptive statistics of independent and dependent variable
+
+# Prepare data for plots
+ess_plot <- 
+  ess %>% 
+  group_by(country) %>% 
+  mutate(trust_m = mean(trust)) %>% 
+  filter(row_number() == 1)
+
+# Plot for ethnic diversity
+desc_diversity <-
+      ggplot(data = ess_plot) +
+      geom_col(aes(x = reorder(country, -diversity), y = diversity), stat="identity") +
+      scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.2)) +
+      labs(x = "Country", 
+           y = "Diversity", 
+           title = "") +
+      theme_bw() +
+      theme(panel.grid.major.x = element_blank(),
+            panel.grid.minor.x = element_blank())
+
+pdf(file = "...\\diversitygraph.pdf",  
+    width = 7, 
+    height = 4.5)
+
+desc_diversity
+
+dev.off()
+
+# Plot for generalized trust
+desc_trust <-
+      ggplot(data = ess_plot) +
+      geom_col(aes(x = reorder(country, -trust_m), y = trust_m), stat="identity") +
+      scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, by = 2)) +
+      labs(x = "Country", 
+           y = "Trust (mean)", 
+           title = "") +
+      theme_bw() +
+      theme(panel.grid.major.x = element_blank(),
+            panel.grid.minor.x = element_blank())
+
+pdf(file = "...\\trustgraph.pdf",   
+    width = 7, 
+    height = 4.5)
+
+desc_trust
+
+dev.off()
+```
+
+
+## Centering
+```{r}
+# Centering level 1 predictors at the group mean
+ess$age_c <- misty::center(ess$age, type = "CWC", cluster = ess$country)
+ess$income_c <- misty::center(ess$income, type = "CWC", cluster = ess$country)
+ess$poleff_c <- misty::center(ess$poleff, type = "CWC", cluster = ess$country)
+
+# Centering level 2 predictors at the grand mean
+ess$diversity_c <- misty::center(ess$diversity, type = "CGM", cluster = ess$country)
+ess$gini_c <- misty::center(ess$gini, type = "CGM", cluster = ess$country)
+ess$gdp_c <- misty::center(ess$gdp, type = "CGM", cluster = ess$country)
+```
+
+## Multilevel regressions
+
+```{r}
+# Empty model
+model0 <- lmer(trust ~ (1|country), data = ess,
+               REML = FALSE)
+summary(model0)
+
+performance::icc(model0)
+```
+
+```{r}
+# Random intercept model with individual level variables
+model1 <- lmer(trust ~ gender + age_c + educ + income_c + relig + poleff_c + unemp + imm + (1|country), data = ess, REML = FALSE)
+summary(model1)
+
+stargazer(model1, type = "text", star.cutoffs = c(0.05, 0.01, 0.001))
+
+performance::icc(model1)
+anova(model0, model1)
+```
+
+```{r}
+# Random intercept model with individual and country level variables
+model2 <- lmer(trust ~ gender + age_c + educ + income_c + relig + poleff_c + unemp + imm 
+               + diversity_c + gdp_c + gini_c + (1|country), data = ess,
+               REML = FALSE)
+summary(model2)
+stargazer(model2, type = "text", star.cutoffs = c(0.05, 0.01, 0.001))
+
+performance::icc(model2)
+anova(model1, model2)
+```
+
+```{r}
+# Random intercept model with individual and country level variables
+model3 <- lmer(trust ~ gender + age_c + educ + income_c + relig + poleff_c + unemp
+               + imm + diversity_c + diversity_c*imm + gdp_c + gini_c + (1|country), 
+               data = ess,
+               REML = FALSE)
+summary(model3)
+stargazer(model3, type = "text", star.cutoffs = c(0.05, 0.01, 0.001))
+
+performance::icc(model3)
+anova(model2, model3)
+```
+
+```{r}
+texreg(list(model1, model2, model3), dcolumn = TRUE, booktabs = TRUE, digits = 3,
+use.packages = FALSE, label = "tab:reg", caption = "Results of multilevel regressions predicting the effect of diversity on trust",
+float.pos = "h")
+```
+
+```{r}
+coefplot <- plot_summs(model1, model2, model3,
+           panel.border = "black", colors = "Dark2",
+           coefs = c("Generalized trust" = "trust",
+                     "Female" = "genderFemale", "Age" = "age_c",
+                     "Educ.: Lower secondary" = "educLower secondary schooling", "Educ.: Upper secondary voc." = "educUpper secondary vocational qualification",
+                     "Educ.: Advanced vocational" = "educAdvanced vocational schooling", "Educ.: University" = "educUniversity", "Educ.: Other" = "educOther",
+                     "Income decile" = "income_c", "Relig.: Sometimes" = "religSometimes",
+                     "Relig.: Often" = "religOften", "Pol. efficacy" = "poleff_c",
+                     "Empl.: Unemployed" = "unempUnemployed", "Empl.: Other" = "unempOther employment status", 
+                     "Immigrant" = "imm1", "Diversity" = "diversity_c", 
+                     "GPD per capita / 1000" = "gdp_c", "Gini index" = "gini_c", "Immigrant x diversity" = "imm1:diversity_c"
+           )
+           )
+
+pdf(file = "...\\coefplot.pdf",
+    width = 7, 
+    height = 5)
+
+coefplot <- coefplot + theme_apa()  + labs(y = NULL) + theme(panel.grid.major.x=element_line(colour = "grey80"), axis.text.y = element_text(colour="black"), axis.text.x = element_text(colour="black")) +  geom_vline(xintercept = 0, color = "black") + scale_x_continuous(breaks=c(-1, -0.5, 0, 0.5, 1, 1.5)) + theme(plot.title = element_text(face = "plain"))
+
+coefplot
+
+dev.off()
+```
+
+```{r}
+intplot <- 
+  plot_model(model3, type = "pred", terms = c("diversity_c [all]", "imm"), colors = "Dark2", axis.title = "Generalized trust") + 
+  theme_bw() + 
+  xlab("Diversity") + 
+  ggtitle("") + 
+  scale_color_discrete(name="Immigration status",
+                       labels=c("Not born abroad", "Born abroad")) +
+  theme(panel.grid.major.x = element_blank(), panel.grid.minor.x = element_blank()) +
+  guides(color = guide_legend(override.aes = list(fill = NA))) 
+
+inplot <- theme(panel.grid.major.x = element_blank(), panel.grid.minor.x = element_blank()) + labs(caption='')
+
+pdf(file = "...\\intplot.pdf",
+    width = 7, 
+    height = 4)
+
+intplot
+
+dev.off()
+```
+
+
+
